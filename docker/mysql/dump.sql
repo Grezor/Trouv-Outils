@@ -1,0 +1,2 @@
+CREATE DATABASE IF NOT EXISTS trouvoutils;
+CREATE DATABASE IF NOT EXISTS trouvoutils_test;
