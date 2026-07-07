@@ -1,0 +1,130 @@
+services:
+  php:
+    image: trouvoutils-php:8.4
+    container_name: trouvoutils-php
+    restart: no
+    build:
+      context: ./docker/php
+    volumes:
+      - ./:/var/www/html/
+    networks:
+      - trouvoutils_network
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.php.rule=Host(`${PHP_SUBDOMAIN}${DOMAIN}`)
+      - traefik.http.routers.php.entrypoints=websecure
+      - traefik.http.routers.php.tls=true
+      - traefik.http.services.php.loadbalancer.server.port=80
+    depends_on:
+      - db
+
+  db:
+    image: trouvoutils-mysql:9.5
+    container_name: trouvoutils-db
+    restart: no
+    build:
+      context: ./docker/mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: noPassword
+    volumes:
+      - db-data-trouvoutils:/var/lib/mysql
+      - ./docker/mysql:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "3307:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-pnoPassword"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    networks:
+      - trouvoutils_network
+
+  phpmyadmin:
+    platform: linux/arm64/v8
+    image: phpmyadmin:5.2.3
+    container_name: trouvoutils-pma
+    restart: no
+    depends_on:
+      - db
+    environment:
+      PMA_HOST: db
+      PMA_USER: root
+      PMA_PASSWORD: noPassword
+      MYSQL_ROOT_PASSWORD: noPassword
+      PMA_ARBITRARY: 1
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.phpmyadmin.rule=Host(`${PMA_SUBDOMAIN}${DOMAIN}`)
+      - traefik.http.routers.phpmyadmin.entrypoints=websecure
+      - traefik.http.routers.phpmyadmin.tls=true
+      
+    ports:
+      - "8080:80"
+    networks:
+      - trouvoutils_network
+
+
+  
+  mailpit:
+    image: axllent/mailpit
+    container_name: trouvoutils-mailpit
+    restart: no
+    volumes:
+        - ./data:/data
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.mailpit.rule=Host(`mail.localhost`)"
+      - "traefik.http.routers.mailpit.entrypoints=websecure"
+      - "traefik.http.routers.mailpit.tls=true"
+    environment:
+        MP_MAX_MESSAGES: 5000
+        MP_DATABASE: /data/mailpit.db
+        MP_SMTP_AUTH_ACCEPT_ANY: 1
+        MP_SMTP_AUTH_ALLOW_INSECURE: 1
+    networks:
+      - trouvoutils_network
+
+  traefik:
+    image: traefik:v3.6
+    container_name: trouvoutils-traefik
+    restart: no
+    command:
+      - "--api.insecure=true"
+      - "--api.dashboard=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.file.directory=/dynamic"
+      - "--providers.file.watch=true"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.traefik.entrypoints=websecure
+      - traefik.http.routers.traefik.tls=true
+      - traefik.http.routers.traefik.rule=(Host(`${TRAEFIK_SUBDOMAIN}${DOMAIN}`))|| HeaderRegexp(`Referer`, `.*/traefik/.*`)
+      # strip prefix
+      - traefik.http.middlewares.traefik-stripprefix.stripprefix.prefixes=/traefik
+      # Apply the middleware
+      - traefik.http.routers.traefik.middlewares=traefik-stripprefix
+      - traefik.http.services.traefik.loadbalancer.server.port=8080
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8081:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      #- ./docker/traefik/certs:/certs:ro
+      #- ./docker/traefik/dynamic:/dynamic:ro
+      #- ./docker/traefik/acme.json:/acme.json
+      - ./docker/traefik/traefik.yml:/etc/traefik/traefik.yml
+      - ./docker/traefik/certificates.yml:/etc/traefik/certificates.yml
+      - ./docker/traefik/certs:/etc/certs:ro # Certificats TLS locaux généré avec le gen.sh
+    networks:
+      - trouvoutils_network
+
+volumes:
+  db-data-trouvoutils:
+
+networks:
+  trouvoutils_network:
